@@ -1,3 +1,6 @@
+#!/usr/bin/python
+# -*- coding:utf-8 -*-
+
 # pyRiveScript - A RiveScript interpreter written in Python.
 
 VERSION = '1.01'
@@ -23,7 +26,7 @@ re_weight  = re.compile('\{weight=(\d+)\}')
 re_inherit = re.compile('\{inherits=(\d+)\}')
 re_wilds   = re.compile('[\s\*\#\_]+')
 re_rot13   = re.compile('<rot13sub>(.+?)<bus31tor>')
-re_nasties = re.compile('[^A-Za-z0-9 ]')
+re_nasties = re.compile(ur'[^A-Za-z0-9\u4e00-\u9fa5]')
 
 # Version of RiveScript we support.
 rs_version = 2.0
@@ -588,7 +591,7 @@ Returns a syntax error string on error; None otherwise."""
             angle  = 0 # Open angled brackets
 
             # Look for obvious errors.
-            match = re.match(r'[^a-z0-9(|)\[\]*_#@{}<>=\s]', line)
+            match = re.match(r'[^a-z0-9[\u4e00-\u9fa5](|)\[\]*_#@{}<>=\s]', line)
             if match:
                 return "Triggers may only contain lowercase letters, numbers, and these symbols: ( | ) [ ] * _ # @ { } < > ="
 
@@ -1119,7 +1122,7 @@ there was no match, this will return None."""
             # Okay to continue?
             if '{ok}' in begin:
                 reply = self._getreply(user, msg)
-                begin = re.sub('{ok}', reply, begin)
+                begin = re.sub('{ok}', reply, begin.encode('utf8'))
 
             reply = begin
 
@@ -1151,7 +1154,8 @@ there was no match, this will return None."""
         # In UTF-8 mode, only strip metacharacters and HTML brackets
         # (to protect from obvious XSS attacks).
         if self._utf8:
-            msg = re.sub(r'[\\<>]', '', msg)
+            msg = re.sub(r'[\\<>\!]', '', msg)
+            msg = self._strip_nasties(msg)
         else:
             # For everything else, strip all non-alphanumerics.
             msg = self._strip_nasties(msg)
@@ -1296,7 +1300,11 @@ there was no match, this will return None."""
                         isMatch = True
 
                         # Collect the stars.
+                        #   遇到这种情况，stars会匹配失败：% (所以，你的名字是*|好的*|我可以叫你*)
                         stars = match.groups()
+                        stars = filter(None, stars)
+                        if len(stars)>1 and stars[0] == msg:
+                            stars = stars[1:]
 
                 if isMatch:
                     self._say("Found a match!")
@@ -1350,12 +1358,12 @@ there was no match, this will return None."""
                             if len(right) == 0:
                                 right = 'undefined'
 
-                            self._say("Check if " + left + " " + eq + " " + right)
+                            self._say("Check if " + left.decode('utf8') + " " + eq + " " + right)
 
                             # Validate it.
                             passed = False
                             if eq == 'eq' or eq == '==':
-                                if left == right:
+                                if left.decode('utf8') == right:
                                     passed = True
                             elif eq == 'ne' or eq == '!=' or eq == '<>':
                                 if left != right:
@@ -1454,16 +1462,16 @@ there was no match, this will return None."""
         for pattern in self._sorted["lists"][list]:
             result = "<rot13sub>" + self._rot13(subs[pattern]) + "<bus31tor>"
             qm     = re.escape(pattern)
-            msg    = re.sub(r'^' + qm + "$", result, msg)
-            msg    = re.sub(r'^' + qm + r'(\W+)', result+r'\1', msg)
-            msg    = re.sub(r'(\W+)' + qm + r'(\W+)', r'\1'+result+r'\2', msg)
-            msg    = re.sub(r'(\W+)' + qm + r'$', r'\1'+result, msg)
+            msg    = re.sub(r'^' + qm + "$", result.decode('utf8'), msg)
+            msg    = re.sub(r'^' + qm + r'(\W+)', result.decode('utf8')+r'\1', msg)
+            msg    = re.sub(r'(\W+)' + qm + r'(\W+)', r'\1'+ result.decode('utf8') +r'\2', msg)
+            msg    = re.sub(r'(\W+)' + qm + r'$', r'\1'+result.decode('utf8'), msg)
 
         placeholders = re.findall(re_rot13, msg)
         for match in placeholders:
             rot13   = match
             decoded = self._rot13(match)
-            msg     = re.sub('<rot13sub>' + re.escape(rot13) + '<bus31tor>', decoded, msg)
+            msg     = re.sub('<rot13sub>' + rot13 + '<bus31tor>', decoded.decode('utf8'), msg)
 
         # Strip & return.
         return msg.strip()
@@ -1478,7 +1486,6 @@ there was no match, this will return None."""
         # Simple replacements.
         regexp = re.sub(r'\*', r'(.+?)', regexp) # Convert * into (.+?)
         regexp = re.sub(r'#', r'(\d+?)', regexp) # Convert # into (\d+?)
-        regexp = re.sub(r'_', r'([A-Za-z]+?)', regexp) # Convert _ into (\w+?)
         regexp = re.sub(r'\{weight=\d+\}', '', regexp) # Remove {weight} tags
         regexp = re.sub(r'<zerowidthstar>', r'(.*?)', regexp)
 
@@ -1501,6 +1508,7 @@ there was no match, this will return None."""
 
             regexp = re.sub(r'\s*\[' + re.escape(match) + '\]\s*', '(?:' + pipes + ')', regexp)
 
+        regexp = re.sub(r'_', r'([^u4e00-u9fa5])', regexp) # Convert _ into (\w+?)
         # Filter in arrays.
         arrays = re.findall(r'\@(.+?)\b', regexp)
         for array in arrays:
@@ -1652,7 +1660,7 @@ there was no match, this will return None."""
         # Set user vars.
         reSet = re.findall('<set (.+?)=(.+?)>', reply)
         for match in reSet:
-            self._say("Set uservar " + str(match[0]) + "=" + str(match[1]))
+            self._say("Set uservar " + str(match[0].encode('utf8')) + "=" + str(match[1].encode('utf8')))
             self._users[user][ match[0] ] = match[1]
             reply = re.sub('<set ' + re.escape(match[0]) + '=' + re.escape(match[1]) + '>', '', reply)
 
@@ -1698,7 +1706,7 @@ there was no match, this will return None."""
             output = 'undefined'
             if match in self._users[user]:
                 output = self._users[user][match]
-            reply = re.sub('<get ' + re.escape(match) + '>', str(output), reply)
+            reply = re.sub('<get ' + re.escape(match).encode('utf8') + '>', str(output.encode('utf8')), reply.encode('utf8'))
 
         # Topic setter.
         reTopic = re.findall(r'\{topic=(.+?)\}', reply)
@@ -1933,7 +1941,8 @@ there was no match, this will return None."""
         trans = string.maketrans(
             "ABCDEFGHIJKLMabcdefghijklmNOPQRSTUVWXYZnopqrstuvwxyz",
             "NOPQRSTUVWXYZnopqrstuvwxyzABCDEFGHIJKLMabcdefghijklm")
-        return string.translate(str(n), trans)
+        #return string.translate(str(n), trans)
+        return n.encode('utf8')
 
     def _strip_nasties(self, s):
         """Formats a string for ASCII regex matching."""
